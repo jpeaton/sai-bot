@@ -157,18 +157,13 @@ async function askSai({ mode = "general", game, question, extra = {} }) {
       question
     );
 
-  const tools = liveInfoNeeded ? [{ type: "web_search_preview" }] : [];
-
   const response = await openai.responses.create({
     model: "gpt-4.1-mini",
-    tools,
+    tools: liveInfoNeeded ? [{ type: "web_search" }] : [],
     input: prompt,
   });
 
-  return (
-    response.output_text?.trim() ||
-    "Sai had a gamer moment and came back blank."
-  );
+  return response.output_text?.trim() || "Sai came back blank.";
 }
 
 /* =========================
@@ -220,11 +215,23 @@ async function getCryptoSnapshot(symbolInput) {
     );
   }
 
-  const cgUrl = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coin.id}&price_change_percentage=24h`;
+  const apiKey = process.env.COINGECKO_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing COINGECKO_API_KEY in Railway variables.");
+  }
 
-  const response = await fetch(cgUrl);
+  const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coin.id}&price_change_percentage=24h`;
+
+  const response = await fetch(url, {
+    headers: {
+      "x-cg-demo-api-key": apiKey,
+      accept: "application/json",
+    },
+  });
+
   if (!response.ok) {
-    throw new Error(`CoinGecko request failed: ${response.status}`);
+    const body = await response.text();
+    throw new Error(`CoinGecko failed: ${response.status} ${body}`);
   }
 
   const data = await response.json();
@@ -452,22 +459,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     await interaction.editReply("Sai loaded in but forgot the strat.");
   } catch (error) {
-    console.error("Interaction error:", error);
+  console.error("Interaction error:", error);
 
-    const friendlyMessage =
-      error.message && error.message.startsWith("Unsupported coin:")
-        ? error.message
-        : "Sai fumbled that request. Try again.";
+  const msg = error?.message
+    ? `Sai hit an error: ${error.message}`
+    : "Sai hit an unknown error.";
 
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply(friendlyMessage);
-    } else {
-      await interaction.reply({
-        content: friendlyMessage,
-        ephemeral: true,
-      });
-    }
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(msg);
+  } else {
+    await interaction.reply({
+      content: msg,
+      ephemeral: true,
+    });
   }
+}
 });
 
 client.login(process.env.DISCORD_TOKEN);

@@ -71,11 +71,15 @@ const commands = [
     ),
 
   new SlashCommandBuilder()
-    .setName("crypto")
-    .setDescription("Give a quick crypto explainer or outlook")
-    .addStringOption((option) =>
-      option.setName("topic").setDescription("Coin, token, or crypto topic").setRequired(true)
-    ),
+  .setName("crypto")
+  .setDescription("Get a live crypto snapshot")
+  .addStringOption((option) =>
+    option
+      .setName("coin")
+      .setDescription("Coin symbol like btc, eth, sol")
+      .setRequired(true)
+  ),
+  
 ].map((command) => command.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
