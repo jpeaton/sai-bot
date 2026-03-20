@@ -1,8 +1,13 @@
-console.log("Sai Bot starting...");
-require('dotenv').config();
+require("dotenv").config();
 
-const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
-const fetch = require('node-fetch');
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  Events,
+} = require("discord.js");
+const OpenAI = require("openai");
+const fetch = require("node-fetch");
 
 const client = new Client({
   intents: [
@@ -10,515 +15,459 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  partials: [Partials.Channel],
 });
 
-const trustedSources = [
-  'reuters.com',
-  'apnews.com',
-  'bloomberg.com',
-  'wsj.com',
-  'ft.com',
-  'cnbc.com',
-  'theverge.com',
-  'techcrunch.com',
-  'coindesk.com',
-  'cointelegraph.com',
-  'ign.com',
-  'espn.com',
-  'bbc.com',
-  'nytimes.com',
-];
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-const importanceKeywords = [
-  'earnings',
-  'acquisition',
-  'acquire',
-  'merger',
-  'lawsuit',
-  'sues',
-  'settlement',
-  'launch',
-  'released',
-  'release',
-  'announces',
-  'announcement',
-  'partnership',
-  'investigation',
-  'probe',
-  'breach',
-  'hack',
-  'security',
-  'layoffs',
-  'cuts',
-  'surge',
-  'drop',
-  'plunge',
-  'rally',
-  'approval',
-  'ban',
-  'tariff',
-  'deal',
-  'expansion',
-  'funding',
-  'raises',
-];
+const WAKE_PREFIXES = ["hey sai", "sai", "@sai"];
 
-const coinAliases = {
-  btc: 'bitcoin',
-  xbt: 'bitcoin',
-  eth: 'ethereum',
-  sol: 'solana',
-  xrp: 'ripple',
-  ada: 'cardano',
-  doge: 'dogecoin',
-  dot: 'polkadot',
-  avax: 'avalanche-2',
-  link: 'chainlink',
-  matic: 'matic-network',
-  uni: 'uniswap',
-  ltc: 'litecoin',
-  bch: 'bitcoin-cash',
-  atom: 'cosmos',
-  etc: 'ethereum-classic',
-  xlm: 'stellar',
-  near: 'near',
-  algo: 'algorand',
-  vet: 'vechain',
-  fil: 'filecoin',
-  icp: 'internet-computer',
-  apt: 'aptos',
-  arb: 'arbitrum',
-  op: 'optimism',
-  inj: 'injective-protocol',
-  aave: 'aave',
-  pepe: 'pepe',
-  shib: 'shiba-inu',
-  trx: 'tron',
-  ton: 'the-open-network',
-  sui: 'sui',
-  hbar: 'hedera-hashgraph',
-  cro: 'crypto-com-chain',
-  kas: 'kaspa',
-  rndr: 'render-token',
-  tao: 'bittensor',
-  fet: 'fetch-ai',
-  tia: 'celestia',
-  sei: 'sei-network',
-  jup: 'jupiter-exchange-solana',
-  wif: 'dogwifcoin',
-  bonk: 'bonk',
-  floki: 'floki',
-  ena: 'ethena',
-};
+/* =========================
+   WAKE PHRASE HELPERS
+========================= */
 
-function shuffle(array) {
-  return array.sort(() => Math.random() - 0.5);
+function shouldTrigger(content) {
+  const text = content.trim().toLowerCase();
+  return WAKE_PREFIXES.some((prefix) => text.startsWith(prefix));
 }
 
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
+function stripWakePhrase(content) {
+  let text = content.trim();
 
-
-const saiTone = {
-  stories: [
-    "Pulled the headlines. It’s giving… ongoing events.",
-    "Here’s what the timeline is yapping about right now.",
-    "Filtered the noise. Most of it was mid.",
-    "These are the stories people are gonna pretend they read.",
-    "Sai checked. The lore is evolving again.",
-    "Here’s what escaped the content abyss.",
-    "Breaking: things are, in fact, happening.",
-  ],
-  brief: [
-    "Condensed it. Your attention span is safe.",
-    "Here’s the TLDR before your brain alt-tabs.",
-    "Sai read it so you can stay in your scrolling era.",
-    "This is the actual gist, minus the NPC dialogue.",
-    "Summarized it. You’re welcome, stay focused king.",
-    "Here’s the main storyline before it gets retconned.",
-    "Pulled the thread so you don’t have to piece the lore together.",
-  ],
-  crypto: [
-    "Sai checked the charts. It’s looking… emotional.",
-    "Live market check. Vibes are questionable.",
-    "Numbers are moving. Interpret that however you want.",
-    "Here’s the coin before someone calls it generational again.",
-    "Market status: spiritually volatile.",
-    "Checked the coin. It is either cooking or getting cooked.",
-    "Crypto continues to be one of the ecosystems of all time.",
-  ]
-};
-
-const saiReplies = [
-  "this just does not get my attention like you thought it would",
-  "i expect very little",
-  "get a load of this retard",
-  "im bracing for impact",
-  "ok lil bro",
-  "i expect very little and you're still testing that",
-  "-10,000 aura",
-  "alright man",
-  "ok relax",
-  "say less. no like actually say less",
-  "im gonna need you to tone it down a bit buddy",
-  "im unmoved",
-  "ok we got it big bro",
-  "cornball head ahh",
-];
-
-const saiGreetings = [
-  "what",
-  "you good brodie?",
-  "what do you need",
-  "bro gave a greeting",
-  "you had something to say?",
-  "go ahead",
-  "this better be something",
-  "what is up my guy",
-  "i’m listening. for now",
-  "don’t start something you can’t finish",
-];
-
-let saiRepliesPool = shuffle([...saiReplies]);
-let saiGreetingsPool = shuffle([...saiGreetings]);
-
-function getNextReply() {
-  if (saiRepliesPool.length === 0) {
-    saiRepliesPool = shuffle([...saiReplies]);
-  }
-  return saiRepliesPool.pop();
-}
-
-function getNextGreeting() {
-  if (saiGreetingsPool.length === 0) {
-    saiGreetingsPool = shuffle([...saiGreetings]);
-  }
-  return saiGreetingsPool.pop();
-}
-
-function getDomain(url) {
-  try {
-    return new URL(url).hostname.replace('www.', '');
-  } catch {
-    return '';
-  }
-}
-
-function scoreArticle(article) {
-  let score = 0;
-
-  const title = (article.title || '').toLowerCase();
-  const description = (article.description || '').toLowerCase();
-  const content = `${title} ${description}`;
-  const domain = getDomain(article.url);
-
-  if (trustedSources.includes(domain)) {
-    score += 3;
-  }
-
-  for (const word of importanceKeywords) {
-    if (content.includes(word)) {
-      score += 2;
+  for (const prefix of WAKE_PREFIXES) {
+    const regex = new RegExp(`^${prefix}[,!: ]*`, "i");
+    if (regex.test(text)) {
+      return text.replace(regex, "").trim();
     }
   }
 
-  const publishedAt = new Date(article.publishedAt).getTime();
-  const now = Date.now();
-  const hoursOld = (now - publishedAt) / (1000 * 60 * 60);
-
-  if (hoursOld <= 12) score += 3;
-  else if (hoursOld <= 24) score += 2;
-  else if (hoursOld <= 48) score += 1;
-
-  return score;
+  return text;
 }
 
-function dedupeArticles(articles) {
-  const seen = new Set();
+/* =========================
+   AI PROMPTS
+========================= */
 
-  return articles.filter((article) => {
-    const normalizedTitle = (article.title || '')
-      .toLowerCase()
-      .replace(/[^\w\s]/g, '')
-      .trim();
+function buildPrompt({ mode, game, question, extra = {} }) {
+  const gameName = game || "the game the user is asking about";
 
-    if (seen.has(normalizedTitle)) {
-      return false;
-    }
+  const modeInstructions = {
+    build: `
+You are Sai, a sharp Discord gaming advisor.
+The user wants the BEST CURRENT BUILD.
+Reply in SHORT Discord-friendly format:
+1) One-line verdict
+2) Core build/items
+3) Why it works
+4) Optional alternate build
+Keep it under 140 words unless necessary.
+If current info matters, prioritize recent live/meta info.
+`,
 
-    seen.add(normalizedTitle);
-    return true;
-  });
-}
+    counter: `
+You are Sai, a sharp Discord gaming advisor.
+The user wants COUNTERS / matchup advice.
+Reply in SHORT format:
+1) Best counters
+2) Why they work
+3) One practical tip
+Keep it under 140 words unless necessary.
+If current meta matters, prioritize recent live info.
+`,
 
-function buildBrief(topic, articles) {
-  const combinedText = articles
-    .map(article => `${article.title || ''} ${article.description || ''}`)
-    .join(' ')
-    .toLowerCase();
+    coach: `
+You are Sai, a practical gaming coach in Discord.
+The user wants improvement advice.
+Reply in SHORT format:
+1) Most likely issue
+2) 2-3 fixes
+3) One build/playstyle adjustment
+Be direct, useful, slightly confident, not cringe.
+Keep it under 160 words.
+`,
 
-  const themes = [];
+    patch: `
+You are Sai, a gaming patch-note explainer.
+Reply in SHORT format:
+1) What changed
+2) What matters most
+3) Who/what got better or worse
+Keep it under 160 words.
+Prioritize live/current info.
+`,
 
-  if (combinedText.includes('earnings') || combinedText.includes('revenue') || combinedText.includes('profit')) {
-    themes.push('financial results');
-  }
+    compare: `
+You are Sai, a gaming advisor comparing two options.
+Reply in SHORT format:
+1) Quick winner
+2) When to pick each
+3) Simple recommendation
+Keep it under 150 words.
+`,
 
-  if (combinedText.includes('launch') || combinedText.includes('release') || combinedText.includes('announcement')) {
-    themes.push('new product or feature announcements');
-  }
+    brief: `
+You are Sai.
+Give a very short, clear, Discord-friendly explanation.
+Usually under 80 words.
+`,
 
-  if (combinedText.includes('lawsuit') || combinedText.includes('investigation') || combinedText.includes('probe')) {
-    themes.push('legal or regulatory developments');
-  }
+    story: `
+You are Sai.
+Tell a short funny or entertaining story about the user's topic.
+Keep it readable and not too long.
+Usually under 140 words.
+`,
 
-  if (combinedText.includes('hack') || combinedText.includes('breach') || combinedText.includes('security')) {
-    themes.push('security-related issues');
-  }
-
-  if (combinedText.includes('partnership') || combinedText.includes('deal') || combinedText.includes('acquisition') || combinedText.includes('merger')) {
-    themes.push('business deals or partnerships');
-  }
-
-  if (combinedText.includes('layoffs') || combinedText.includes('cuts') || combinedText.includes('jobs')) {
-    themes.push('workforce or restructuring news');
-  }
-
-  if (combinedText.includes('market') || combinedText.includes('stock') || combinedText.includes('shares') || combinedText.includes('surge') || combinedText.includes('drop')) {
-    themes.push('market movement');
-  }
-
-  let summary = `Sai pulled the strongest recent coverage for **${topic}**, but the stories are pretty mixed right now.`;
-
-  if (themes.length === 1) {
-    summary = `Recent coverage around **${topic}** is mainly focused on ${themes[0]}.`;
-  } else if (themes.length === 2) {
-    summary = `Recent coverage around **${topic}** is mainly focused on ${themes[0]} and ${themes[1]}.`;
-  } else if (themes.length >= 3) {
-    summary = `Recent coverage around **${topic}** is centered on ${themes[0]}, ${themes[1]}, and ${themes[2]}.`;
-  }
-
-  return {
-    summary,
+    general: `
+You are Sai, a Discord gaming advisor.
+Only answer as a SHORT practical gaming helper.
+Do not ramble.
+Prefer bullets or very short sections.
+If the question depends on current meta, patch state, balance, builds, tier lists, or recent updates, use live info.
+Keep it under 160 words.
+`,
   };
+
+  return `
+${modeInstructions[mode] || modeInstructions.general}
+
+Game: ${gameName}
+User question: ${question}
+
+Extra context:
+${JSON.stringify(extra, null, 2)}
+
+Style:
+- concise
+- practical
+- Discord-friendly
+- slight attitude is okay
+- no fake certainty
+- if live info is weak or mixed, say so briefly
+`;
 }
 
-async function fetchRankedArticles(topic) {
-  const apiKey = process.env.GNEWS_API_KEY;
+async function askSai({ mode = "general", game, question, extra = {} }) {
+  const prompt = buildPrompt({ mode, game, question, extra });
 
-  if (!apiKey) {
-    throw new Error('Missing GNews API key in .env');
-  }
+  const liveInfoNeeded =
+    /(meta|current|right now|latest|patch|updated|best build|counter|tier|buff|nerf|guide|build order|matchup)/i.test(
+      question
+    );
 
-  const url = `https://gnews.io/api/v4/search?q=${encodeURIComponent(topic)}&lang=en&max=10&token=${apiKey}`;
+  const tools = liveInfoNeeded ? [{ type: "web_search_preview" }] : [];
 
-  const response = await fetch(url);
-  const data = await response.json();
+  const response = await openai.responses.create({
+    model: "gpt-4.1-mini",
+    tools,
+    input: prompt,
+  });
 
-  if (!data.articles || data.articles.length === 0) {
-    return [];
-  }
-
-  const cleanedArticles = dedupeArticles(data.articles);
-
-  return cleanedArticles
-    .map(article => ({
-      ...article,
-      score: scoreArticle(article),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+  return (
+    response.output_text?.trim() ||
+    "Sai had a gamer moment and came back blank."
+  );
 }
 
-function formatUsd(value) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: value >= 1 ? 2 : 6,
-  }).format(value);
-}
+/* =========================
+   CRYPTO HELPERS
+========================= */
 
-function formatLargeNumber(value) {
-  return new Intl.NumberFormat('en-US', {
-    notation: 'compact',
+const COIN_MAP = {
+  btc: { id: "bitcoin", name: "Bitcoin", symbol: "BTC" },
+  eth: { id: "ethereum", name: "Ethereum", symbol: "ETH" },
+  sol: { id: "solana", name: "Solana", symbol: "SOL" },
+  xrp: { id: "ripple", name: "XRP", symbol: "XRP" },
+  doge: { id: "dogecoin", name: "Dogecoin", symbol: "DOGE" },
+  ada: { id: "cardano", name: "Cardano", symbol: "ADA" },
+  avax: { id: "avalanche-2", name: "Avalanche", symbol: "AVAX" },
+};
+
+function formatMoney(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
 }
 
-client.once('ready', () => {
-  console.log(`Sai Bot is online as ${client.user.tag}`);
-  console.log('Bot user ID:', client.user.id);
-});
-
-client.on('messageCreate', (message) => {
-  if (message.author.bot) return;
-
-  const content = message.content.toLowerCase();
-  console.log("message seen:", content);
-
-  const greetingPatterns = [
-  /\bhey\b/,
-  /\bhi\b/,
-  /\bhello\b/,
-  /\byo\b/,
-  /\bwhat's up\b/,
-  /\bsup\b/,
-  /\bhey there\b/,
-  /\bgreetings\b/,
-  /\bsalutations\b/,
-  /\bwassup\b/,
-  /\bhowdy\b/,
-  /\bhiya\b/,
-  /\baye\b/,
-  /\bhello there\b/,
-  /\bhi there\b/,
-  /\bhey bot\b/,
-  /\bhello bot\b/,
-  /\byo bot\b/
-];
-
-const isGreeting = greetingPatterns.some((pattern) => pattern.test(content));
-
-if (content.includes("sai")) {
-  const reply = isGreeting ? getNextGreeting() : getNextReply();
-
-  setTimeout(() => {
-    message.reply(reply);
-  }, 2000); // 2000ms = 2 seconds
+function formatPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "N/A";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
 }
+
+function getStatus(change) {
+  if (change === null || change === undefined || Number.isNaN(change)) {
+    return "Unknown";
+  }
+  if (change > 0.5) return "Up";
+  if (change < -0.5) return "Down";
+  return "Flat-ish";
+}
+
+async function getCryptoSnapshot(symbolInput) {
+  const symbol = symbolInput.toLowerCase().trim();
+  const coin = COIN_MAP[symbol];
+
+  if (!coin) {
+    throw new Error(
+      `Unsupported coin: ${symbol}. Supported: ${Object.keys(COIN_MAP).join(", ")}`
+    );
+  }
+
+  const cgUrl = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${coin.id}&price_change_percentage=24h`;
+
+  const response = await fetch(cgUrl);
+  if (!response.ok) {
+    throw new Error(`CoinGecko request failed: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const item = data[0];
+
+  if (!item) {
+    throw new Error(`No CoinGecko data found for ${coin.id}`);
+  }
+
+  return {
+    inputSymbol: symbol,
+    name: coin.name,
+    symbol: coin.symbol,
+    price: item.current_price,
+    change24h: item.price_change_percentage_24h,
+    marketCap: item.market_cap,
+    volume24h: item.total_volume,
+    rank: item.market_cap_rank,
+    receivedAt: new Date(),
+  };
+}
+
+async function getCryptoNews(symbolInput, coinName) {
+  const apiKey = process.env.GNEWS_API_KEY;
+  if (!apiKey) return null;
+
+  const q = encodeURIComponent(`${coinName} OR ${symbolInput.toUpperCase()} crypto`);
+  const url = `https://gnews.io/api/v4/search?q=${q}&lang=en&max=1&apikey=${apiKey}`;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    if (!data.articles || !data.articles.length) return null;
+
+    return data.articles[0];
+  } catch (error) {
+    console.error("GNews error:", error);
+    return null;
+  }
+}
+
+async function buildCryptoMessage(symbolInput) {
+  const snapshot = await getCryptoSnapshot(symbolInput);
+  const news = await getCryptoNews(symbolInput, snapshot.name);
+
+  return [
+    `**${snapshot.name} (${snapshot.symbol})**`,
+    `Numbers are moving. Interpret that however you want.`,
+    ``,
+    `**Live crypto snapshot for ${snapshot.inputSymbol}.**`,
+    ``,
+    `**Price:** ${formatMoney(snapshot.price)}`,
+    `**24h Change:** ${formatPercent(snapshot.change24h)}`,
+    `**Status:** ${getStatus(snapshot.change24h)}`,
+    `**Market Cap:** ${formatMoney(snapshot.marketCap)}`,
+    `**24h Volume:** ${formatMoney(snapshot.volume24h)}`,
+    `**Market Cap Rank:** #${snapshot.rank ?? "N/A"}`,
+    `**Date/time received:** ${snapshot.receivedAt.toLocaleString("en-US")}`,
+    news ? `**News:** ${news.title}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/* =========================
+   DISCORD EVENTS
+========================= */
+
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`Sai Bot is online as ${readyClient.user.tag}`);
+  console.log(`Bot user ID: ${readyClient.user.id}`);
 });
 
-client.on('interactionCreate', async (interaction) => {
+client.on(Events.MessageCreate, async (message) => {
+  try {
+    if (message.author.bot) return;
+    if (!shouldTrigger(message.content)) return;
+
+    const userQuestion = stripWakePhrase(message.content);
+
+    if (!userQuestion) {
+      await message.reply("yeah?");
+      return;
+    }
+
+    await message.channel.sendTyping();
+
+    const answer = await askSai({
+      mode: "general",
+      game: "video games / likely Deadlock, CS2, or similar multiplayer titles",
+      question: userQuestion,
+      extra: {
+        source: "natural chat trigger",
+        user: message.author.username,
+      },
+    });
+
+    await message.reply(answer);
+  } catch (error) {
+    console.error("Message handler error:", error);
+    await message.reply("Sai bricked the lookup. Try again in a sec.");
+  }
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
-  if (interaction.commandName === 'stories') {
-    const topic = interaction.options.getString('topic');
-
+  try {
     await interaction.deferReply();
 
-    try {
-      const rankedArticles = await fetchRankedArticles(topic);
+    let answer = "";
 
-      if (rankedArticles.length === 0) {
-        await interaction.editReply(`Sai found no major stories for **${topic}** right now.`);
-        return;
-      }
+    if (interaction.commandName === "build") {
+      const game = interaction.options.getString("game");
+      const character = interaction.options.getString("character");
 
-      const embed = new EmbedBuilder()
-        .setTitle(`Top stories for: ${topic}`)
-        .setDescription(pick(saiTone.stories))
-        .setTimestamp();
-
-      rankedArticles.forEach((article, index) => {
-        const domain = getDomain(article.url);
-        embed.addFields({
-          name: `${index + 1}. ${article.title}`,
-          value: `[Read more](${article.url}) • ${domain}`,
-        });
+      answer = await askSai({
+        mode: "build",
+        game,
+        question: `What is the best current build for ${character} in ${game}?`,
+        extra: { character },
       });
 
-      await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-      console.error(error);
-      await interaction.editReply('Sai ran into an issue pulling stories.');
+      await interaction.editReply(answer);
+      return;
     }
-  }
 
-  if (interaction.commandName === 'brief') {
-    const topic = interaction.options.getString('topic');
+    if (interaction.commandName === "counter") {
+      const game = interaction.options.getString("game");
+      const target = interaction.options.getString("target");
 
-    await interaction.deferReply();
+      answer = await askSai({
+        mode: "counter",
+        game,
+        question: `What are the best current counters to ${target} in ${game}?`,
+        extra: { target },
+      });
 
-    try {
-      const rankedArticles = await fetchRankedArticles(topic);
-
-      if (rankedArticles.length === 0) {
-        await interaction.editReply(`Sai found no major stories for **${topic}** right now.`);
-        return;
-      }
-
-      const brief = buildBrief(topic, rankedArticles);
-
-      const embed = new EmbedBuilder()
-        .setTitle(`Brief for: ${topic}`)
-        .setDescription(`${pick(saiTone.brief)}\n\n${brief.summary}`)
-        .addFields({
-          name: 'Main headlines',
-          value: rankedArticles.map((article, index) => `${index + 1}. ${article.title}`).join('\n'),
-        })
-        .setTimestamp();
-
-      await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-      console.error(error);
-      await interaction.editReply('Sai ran into an issue building the brief.');
+      await interaction.editReply(answer);
+      return;
     }
-  }
 
-  if (interaction.commandName === 'crypto') {
-    const userInput = interaction.options.getString('coin').toLowerCase();
-    const coin = coinAliases[userInput] || userInput;
-    await interaction.deferReply();
+    if (interaction.commandName === "coach") {
+      const game = interaction.options.getString("game");
+      const situation = interaction.options.getString("situation");
 
-    try {
-      const url = `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${encodeURIComponent(coin)}`;
+      answer = await askSai({
+        mode: "coach",
+        game,
+        question: `Coach me in ${game}. Situation: ${situation}`,
+        extra: { situation },
+      });
 
-      const response = await fetch(url);
-      const data = await response.json();
+      await interaction.editReply(answer);
+      return;
+    }
 
-      if (!Array.isArray(data) || data.length === 0) {
-        await interaction.editReply(`Sai couldn't find crypto data for **${userInput}**. Try something like **btc**, **eth**, **sol**, **xrp**, or a full CoinGecko id like **bitcoin**.`);
-        return;
-      }
+    if (interaction.commandName === "patch") {
+      const game = interaction.options.getString("game");
+      const topic =
+        interaction.options.getString("topic") || "latest patch/meta changes";
 
-      const coinData = data[0];
-      const change24h = coinData.price_change_percentage_24h ?? 0;
-      const direction = change24h >= 0 ? 'Up' : 'Down';
+      answer = await askSai({
+        mode: "patch",
+        game,
+        question: `Summarize the latest important patch/meta changes for ${game}. Focus on ${topic}.`,
+        extra: { topic },
+      });
 
-      const embed = new EmbedBuilder()
-        .setTitle(`${coinData.name} (${coinData.symbol.toUpperCase()})`)
-        .setDescription(`${pick(saiTone.crypto)}\n\nLive crypto snapshot for **${userInput}**.`)
-        .addFields(
-          {
-            name: 'Price',
-            value: formatUsd(coinData.current_price),
-            inline: true,
-          },
-          {
-            name: '24h Change',
-            value: `${change24h.toFixed(2)}%`,
-            inline: true,
-          },
-          {
-            name: 'Status',
-            value: direction,
-            inline: true,
-          },
-          {
-            name: 'Market Cap',
-            value: formatUsd(coinData.market_cap),
-            inline: true,
-          },
-          {
-            name: '24h Volume',
-            value: formatUsd(coinData.total_volume),
-            inline: true,
-          },
-          {
-            name: 'Market Cap Rank',
-            value: `#${coinData.market_cap_rank}`,
-            inline: true,
-          }
-        )
-        .setTimestamp();
-        
+      await interaction.editReply(answer);
+      return;
+    }
 
-      await interaction.editReply({ embeds: [embed] });
-    } catch (error) {
-      console.error(error);
-      await interaction.editReply('Sai ran into an issue pulling crypto data.');
+    if (interaction.commandName === "compare") {
+      const game = interaction.options.getString("game");
+      const option1 = interaction.options.getString("option1");
+      const option2 = interaction.options.getString("option2");
+
+      answer = await askSai({
+        mode: "compare",
+        game,
+        question: `Compare ${option1} vs ${option2} in ${game}. Which is better right now and when should each be picked?`,
+        extra: { option1, option2 },
+      });
+
+      await interaction.editReply(answer);
+      return;
+    }
+
+    if (interaction.commandName === "brief") {
+      const topic = interaction.options.getString("topic");
+
+      answer = await askSai({
+        mode: "brief",
+        question: `Explain briefly: ${topic}`,
+        extra: { topic },
+      });
+
+      await interaction.editReply(answer);
+      return;
+    }
+
+    if (interaction.commandName === "story") {
+      const topic = interaction.options.getString("topic");
+
+      answer = await askSai({
+        mode: "story",
+        question: `Tell a short story about: ${topic}`,
+        extra: { topic },
+      });
+
+      await interaction.editReply(answer);
+      return;
+    }
+
+    if (interaction.commandName === "crypto") {
+      const coin = interaction.options.getString("coin");
+      const cryptoMessage = await buildCryptoMessage(coin);
+
+      await interaction.editReply(cryptoMessage);
+      return;
+    }
+
+    await interaction.editReply("Sai loaded in but forgot the strat.");
+  } catch (error) {
+    console.error("Interaction error:", error);
+
+    const friendlyMessage =
+      error.message && error.message.startsWith("Unsupported coin:")
+        ? error.message
+        : "Sai fumbled that request. Try again.";
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(friendlyMessage);
+    } else {
+      await interaction.reply({
+        content: friendlyMessage,
+        ephemeral: true,
+      });
     }
   }
 });
 
-client.login(process.env.TOKEN).catch(console.error);
+client.login(process.env.DISCORD_TOKEN);
