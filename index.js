@@ -152,18 +152,47 @@ Style:
 async function askSai({ mode = "general", game, question, extra = {} }) {
   const prompt = buildPrompt({ mode, game, question, extra });
 
-  const liveInfoNeeded =
-    /(meta|current|right now|latest|patch|updated|best build|counter|tier|buff|nerf|guide|build order|matchup)/i.test(
+  // =========================
+  // SMART SEARCH LOGIC
+  // =========================
+
+  const forceSearchModes = ["build", "counter", "patch"];
+
+  const metaSensitiveCoach =
+    mode === "coach" &&
+    /(meta|current|latest|patch|right now|this patch|best build|best setup)/i.test(
       question
     );
 
+  const generalMetaTrigger =
+    /(latest|patch|recent update|today|right now|current meta)/i.test(question);
+
+  const useWebSearch =
+    forceSearchModes.includes(mode) ||
+    metaSensitiveCoach ||
+    generalMetaTrigger;
+
+  // =========================
+  // DEBUG LOG (optional but useful)
+  // =========================
+  console.log(
+    `[Sai] Mode: ${mode} | WebSearch: ${useWebSearch} | Q: ${question}`
+  );
+
+  // =========================
+  // OPENAI CALL
+  // =========================
+
   const response = await openai.responses.create({
     model: "gpt-4.1-mini",
-    tools: liveInfoNeeded ? [{ type: "web_search" }] : [],
+    tools: useWebSearch ? [{ type: "web_search" }] : [],
     input: prompt,
   });
 
-  return response.output_text?.trim() || "Sai came back blank.";
+  return (
+    response.output_text?.trim() ||
+    "Sai had a gamer moment and came back blank."
+  );
 }
 
 /* =========================
